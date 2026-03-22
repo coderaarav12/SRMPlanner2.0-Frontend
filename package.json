@@ -1,6 +1,5 @@
 {
-<<<<<<< HEAD
-  "name": "my-v0-project",
+  "name": "srmplanner",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -65,6 +64,7 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
+    "@cloudflare/next-on-pages": "^1",
     "@tailwindcss/postcss": "^4.1.9",
     "@types/node": "^22",
     "@types/react": "^19",
@@ -74,18 +74,3 @@
     "typescript": "^5"
   }
 }
-=======
-  "name": "srm-worker",
-  "version": "1.0.0",
-  "private": true,
-  "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^4.20240924.0",
-    "typescript": "^5.5.2",
-    "wrangler": "^3.78.7"
-  }
-}
->>>>>>> a7450610e6b674eadf9ff8950c7bcf6c259158ab
