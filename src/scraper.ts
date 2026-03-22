@@ -20,13 +20,11 @@ async function fetchPage(path: string, cookie: string): Promise<string> {
   if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${path}`)
   const text = await resp.text()
 
-  // Most pages embed hex-encoded HTML inside .sanitize('...')
   const parts = text.split(".sanitize('")
   if (parts.length >= 2) {
     return convertHexToHTML(parts[1].split("')")[0])
   }
 
-  // Calendar uses zmlvalue="..."
   if (text.includes('zmlvalue="')) {
     const raw = text.split('zmlvalue="')[1]?.split('" > </div> </div>')[0] ?? ""
     return decodeHTMLEntities(convertHexToHTML(raw))
@@ -41,22 +39,29 @@ function parseTable(html: string): string[][] {
   const rows: string[][] = []
   const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi
   const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi
-
   let rowMatch
   while ((rowMatch = rowRegex.exec(html)) !== null) {
     const cells: string[] = []
     let cellMatch
     const rowContent = rowMatch[1]
     while ((cellMatch = cellRegex.exec(rowContent)) !== null) {
-      const text = cellMatch[1]
-        .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
+      const text = cellMatch[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
       cells.push(text)
     }
     if (cells.length > 0) rows.push(cells)
   }
   return rows
+}
+
+// Extract all <table>...</table> blocks from HTML
+function extractAllTables(html: string): string[] {
+  const tables: string[] = []
+  const tableRegex = /<table[\s\S]*?<\/table>/gi
+  let m
+  while ((m = tableRegex.exec(html)) !== null) {
+    tables.push(m[0])
+  }
+  return tables
 }
 
 function extractRegNumber(html: string): string {
@@ -65,16 +70,9 @@ function extractRegNumber(html: string): string {
 
 // ─── Attendance + Marks ───────────────────────────────────────────────────────
 //
-// Attendance table columns (verified from live page screenshot):
-//   0: Course Code
-//   1: Course Title
-//   2: Category
-//   3: Faculty Name
-//   4: Slot
-//   5: Room No          ← scraper was reading this as hoursConducted (WRONG)
-//   6: Hours Conducted  ← correct index
-//   7: Hours Absent     ← correct index
-//   8: Attn %           ← correct index
+// Attendance columns (verified from live page):
+//   0: Course Code  1: Course Title  2: Category  3: Faculty
+//   4: Slot  5: Room No  6: Hours Conducted  7: Hours Absent  8: Attn%
 
 export async function getAttendanceAndMarks(cookie: string) {
   const html = await fetchPage("My_Attendance", cookie)
@@ -89,21 +87,20 @@ export async function getAttendanceAndMarks(cookie: string) {
   for (const row of attRows) {
     if (row.length < 8) continue
     const code = row[0]
-    // Skip header rows and non-course rows
     if (!code.match(/^\d{2}[A-Z]/)) continue
 
-    const conducted = parseFloat_(row[6])  // fixed: was row[5]
-    const absent    = parseFloat_(row[7])  // fixed: was row[6]
+    const conducted = parseFloat_(row[6])
+    const absent    = parseFloat_(row[7])
     const pct = conducted > 0 ? ((conducted - absent) / conducted) * 100 : 0
 
     attendance.push({
-      courseCode:          code.replace(/Regular/gi, "").trim(),
-      courseTitle:         row[1],
-      category:            row[2],
-      facultyName:         row[3],
-      slot:                row[4],
-      hoursConducted:      conducted,
-      hoursAbsent:         absent,
+      courseCode:           code.replace(/Regular/gi, "").trim(),
+      courseTitle:          row[1],
+      category:             row[2],
+      facultyName:          row[3],
+      slot:                 row[4],
+      hoursConducted:       conducted,
+      hoursAbsent:          absent,
       attendancePercentage: parseFloat(pct.toFixed(2)),
     })
   }
@@ -122,8 +119,7 @@ export async function getAttendanceAndMarks(cookie: string) {
     const code = row[0]?.trim()
     const type = row[1]?.trim()
     if (!code || !type) continue
-    // Skip header row — real course codes start with two digits e.g. "21LEH101T"
-    if (!code.match(/^\d{2}[A-Z]/)) continue
+    if (!code.match(/^\d{2}[A-Z]/)) continue  // skip header row
 
     const testRaw = row.slice(2).join(" ")
     const tests: any[] = []
@@ -162,52 +158,65 @@ export async function getAttendanceAndMarks(cookie: string) {
 
 // ─── Courses ──────────────────────────────────────────────────────────────────
 //
-// Course table columns (verified from live page screenshot):
-//   0: S.No
-//   1: Course Code
-//   2: Course Title
-//   3: Credit
-//   4: Regn Type
-//   5: Category
-//   6: Course Type
-//   7: Faculty Name
-//   8: Slot
-//   9: Room No
-//  10: Academic Year
+// Course columns (verified from live screenshot):
+//   0: S.No  1: Course Code  2: Course Title  3: Credit
+//   4: Regn Type  5: Category  6: Course Type  7: Faculty  8: Slot  9: Room  10: AY
 //
-// NOTE: The page URL stays "My_Time_Table_2023_24" even for AY 2025-26.
-// SRM never updated the URL slug. This is correct — do NOT change the URL.
+// Strategy: try multiple ways to find the course table since class name may vary.
 
 export async function getCourses(cookie: string) {
   const html = await fetchPage("My_Time_Table_2023_24", cookie)
   const regNumber = extractRegNumber(html)
 
-  const tableSection = html.split(`class="course_tbl"`)?.[1] ?? ""
-  const tableHTML = `<table>${tableSection.split("</table>")[0]}</table>`
-  const rows = parseTable(tableHTML)
+  // Try multiple split strategies to find the course table
+  let tableHTML = ""
 
+  // Strategy 1: original class name
+  if (html.includes('class="course_tbl"')) {
+    const section = html.split('class="course_tbl"')[1] ?? ""
+    tableHTML = `<table>${section.split("</table>")[0]}</table>`
+  }
+  // Strategy 2: single-quote class name variant
+  else if (html.includes("class='course_tbl'")) {
+    const section = html.split("class='course_tbl'")[1] ?? ""
+    tableHTML = `<table>${section.split("</table>")[0]}</table>`
+  }
+  // Strategy 3: scan ALL tables, find the one with course code patterns
+  else {
+    const allTables = extractAllTables(html)
+    for (const tbl of allTables) {
+      const rows = parseTable(tbl)
+      // A course table has many rows and the second column of data rows looks like a course code
+      const dataRows = rows.filter(r => r.length >= 10 && r[1]?.match(/^\d{2}[A-Z]/))
+      if (dataRows.length > 0) {
+        tableHTML = tbl
+        break
+      }
+    }
+  }
+
+  const rows = parseTable(tableHTML)
   const courses: any[] = []
+
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
     if (row.length < 10) continue
-
     const code = row[1]?.trim()
-    // Skip header row and empty rows
-    if (!code || !code.match(/^\d{2}[A-Z]/)) continue
+    if (!code || !code.match(/^\d{2}[A-Z]/)) continue  // skip header
 
     const slot = row[8].replace(/-$/, "").trim()
     courses.push({
       code,
-      title:         row[2].split(" –")[0].split(" \u2013")[0].trim(),
-      credit:        parseInt_(row[3]),
-      category:      row[5],
+      title:          row[2].split(" –")[0].split(" \u2013")[0].trim(),
+      credit:         parseInt_(row[3]),
       courseCategory: row[4],
-      type:          row[6] || "N/A",
-      slotType:      slot.includes("P") ? "Practical" : "Theory",
-      faculty:       row[7] || "N/A",
+      category:       row[5],
+      type:           row[6] || "N/A",
+      slotType:       slot.includes("P") ? "Practical" : "Theory",
+      faculty:        row[7] || "N/A",
       slot,
-      room:          row[9] || "N/A",
-      academicYear:  row[10] || "",
+      room:           row[9] || "N/A",
+      academicYear:   row[10] || "",
     })
   }
 
@@ -216,8 +225,7 @@ export async function getCourses(cookie: string) {
 
 // ─── User ─────────────────────────────────────────────────────────────────────
 //
-// Combo/Batch field from SRM is "1/1" for batch 1 — we take the FIRST digit only.
-// val.replace(/\D/g,"") would turn "1/1" into "11" which is wrong.
+// Combo/Batch from SRM is "1/1" → take first digit only.
 
 export async function getUser(cookie: string) {
   const html = await fetchPage("My_Time_Table_2023_24", cookie)
@@ -236,13 +244,13 @@ export async function getUser(cookie: string) {
         case "Program": user.program = val; break
         case "Semester": user.semester = parseInt_(val); break
         case "Department": {
-          const parts = val.split("-")
+          const parts    = val.split("-")
           user.department = parts[0].trim()
           user.section    = parts[1]?.replace(/\(.*Section\)/, "").trim() ?? ""
           break
         }
         case "Combo / Batch":
-          // SRM returns "1/1", "2/1" etc. — take only the FIRST digit (batch number)
+          // "1/1" → "1", "2/1" → "2" — take first digit only
           user.batch = (val.match(/\d/) ?? ["1"])[0]
           break
       }
@@ -253,10 +261,6 @@ export async function getUser(cookie: string) {
 }
 
 // ─── Timetable ────────────────────────────────────────────────────────────────
-//
-// Verified slot layout from live Unified Time Table screenshots (Batch 1 & 2).
-// Hours 1-10 are theory/lab slots. Hours 11-12 (L11/L12 etc.) are extra lab slots
-// shown in blue on the page — included here for completeness.
 
 const BATCH1_SLOTS = [
   { day: 1, slots: ["A","A","F","F","G","P6","P7","P8","P9","P10","L11","L12"] },
@@ -279,10 +283,8 @@ const TIME_SLOTS = [
 ]
 
 export function buildTimetable(courses: any[], batch: number) {
-  // Treat any batch other than 2 as batch 1
   const batchSlots = batch === 2 ? BATCH2_SLOTS : BATCH1_SLOTS
 
-  // Build slot → course lookup
   const slotMap: Record<string, any> = {}
   for (const course of courses) {
     const slots = course.slot.split("-").map((s: string) => s.trim())
@@ -321,7 +323,6 @@ export async function getCalendar(cookie: string) {
     html = await fetchPage("Academic_Planner_2025_26_ODD", `ZCNEWUIPUBLICPORTAL=true; cli_rgn=IN; ${extractCookies(cookie)}`)
   }
 
-  // Extract month headers — match "'2" to catch "Jan '26" style labels
   const monthHeaders: string[] = []
   const thRegex = /<th[^>]*>([\s\S]*?)<\/th>/gi
   let m
@@ -354,7 +355,6 @@ export async function getCalendar(cookie: string) {
     }
   }
 
-  // Sort months chronologically
   const monthOrder = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
   calendar.sort((a, b) => {
     const ai = monthOrder.findIndex(mo => a.month.startsWith(mo))
@@ -362,13 +362,12 @@ export async function getCalendar(cookie: string) {
     return ai - bi
   })
 
-  // Find today + tomorrow entries
-  const now      = new Date()
-  const curMonth = monthOrder[now.getMonth()]
+  const now        = new Date()
+  const curMonth   = monthOrder[now.getMonth()]
   const monthEntry = calendar.find(c => c.month.includes(curMonth))
   const todayDay   = now.getDate()
 
-  const today    = monthEntry?.days?.find((d: any) => parseInt_(d.date) === todayDay)    ?? null
+  const today    = monthEntry?.days?.find((d: any) => parseInt_(d.date) === todayDay)     ?? null
   const tomorrow = monthEntry?.days?.find((d: any) => parseInt_(d.date) === todayDay + 1) ?? null
 
   return { today, tomorrow, calendar }
