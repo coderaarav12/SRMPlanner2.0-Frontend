@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 name = "srmplanner"
 type = "javascript"
 main = "src/index.js"
@@ -15,3 +16,13 @@ watch_paths = ["src/**/*.ts"]
 
 [[build.upload]]
 format = "service-worker"
+=======
+name = "srm-worker"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "29fd27cbfe2b4a52b281f813349a9cd0"
+>>>>>>> a7450610e6b674eadf9ff8950c7bcf6c259158ab
