@@ -1,3 +1,5 @@
+export const runtime = 'edge'
+
 import { type NextRequest, NextResponse } from "next/server"
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_SRM_BACKEND_URL || process.env.SRM_BACKEND_URL
@@ -14,7 +16,6 @@ export async function GET(request: NextRequest) {
     })
     const data = await response.json()
     if (!response.ok) return NextResponse.json(data, { status: response.status })
-    // Return full response — srm-api.ts reads data.personal_timetable
     return NextResponse.json(data)
   } catch (error) {
     return NextResponse.json({ error: "Failed to fetch courses" }, { status: 500 })

@@ -1,3 +1,5 @@
+export const runtime = 'edge'
+
 import { type NextRequest, NextResponse } from "next/server"
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_SRM_BACKEND_URL || process.env.SRM_BACKEND_URL
